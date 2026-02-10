@@ -1,8 +1,17 @@
+import vocab6000 from "./korean_vocabulary.json";
+
 export type Word = {
   korean: string;
   en: string;
-  zh: string;
+  zh: string | null;
   hanja?: string | null;
+};
+
+type RawVocabEntry = {
+  korean: string;
+  en: string;
+  zh: string | null;
+  hanja: string | null;
 };
 
 // Basic everyday words – good for TOPIK 1 level practice.
@@ -99,10 +108,23 @@ export const wordsTopik2: Word[] = [
   { korean: "목표", en: "goal", zh: "目标", hanja: "目標" },
 ];
 
+// Large 6000-word vocab list, sourced from `korean_vocabulary.json`.
+// We keep the structure consistent with `Word` and reuse the English/Chinese/Hanja
+// data from the JSON file wherever available.
+export const words6000: Word[] = (vocab6000 as RawVocabEntry[]).map(
+  (item) => ({
+    korean: item.korean,
+    en: item.en,
+    zh: item.zh,
+    hanja: item.hanja,
+  })
+);
+
 // Helper map for easy lookup in the game component.
 export const wordsByLevel = {
   topik1: wordsTopik1,
   topik2: wordsTopik2,
+  words6000,
 } as const;
 
 // Backwards-compatible export – default to TOPIK 1 list.

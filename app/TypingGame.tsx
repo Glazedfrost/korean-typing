@@ -7,7 +7,11 @@ import { wordsByLevel, type Word } from "../data/words";
 // - "copy": show the Korean word and ask the user to copy it
 // - "recall": hide the Korean word, user recalls it from the definition
 type GameMode = "copy" | "recall";
-type Difficulty = "topik1" | "topik2";
+// Difficulty:
+// - "topik1": basic everyday words
+// - "topik2": more abstract / advanced
+// - "words6000": large 6000-word list from JSON vocab
+type Difficulty = "topik1" | "topik2" | "words6000";
 
 // Small delay before automatically moving to the next word
 const NEXT_WORD_DELAY_MS = 500;
@@ -175,7 +179,7 @@ export default function TypingGame() {
             <div className="text-xs font-semibold uppercase tracking-[0.2em] text-slate-400">
               Korean Typing Trainer
             </div>
-            <div className="mt-2 inline-flex rounded-full bg-slate-800 p-1 text-[11px] font-medium text-slate-300">
+            <div className="mt-2 inline-flex flex-wrap gap-1 rounded-full bg-slate-800 p-1 text-[11px] font-medium text-slate-300">
               <button
                 type="button"
                 onClick={() => handleDifficultyChange("topik1")}
@@ -197,6 +201,17 @@ export default function TypingGame() {
                 }`}
               >
                 TOPIK 2 (Harder)
+              </button>
+              <button
+                type="button"
+                onClick={() => handleDifficultyChange("words6000")}
+                className={`rounded-full px-3 py-1 ${
+                  difficulty === "words6000"
+                    ? "bg-sky-400 text-white shadow-sm"
+                    : "hover:text-white"
+                }`}
+              >
+                6000 Words
               </button>
             </div>
           </div>
