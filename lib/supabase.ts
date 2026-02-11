@@ -1,3 +1,4 @@
+import { Word } from '@/data/words'
 import { createClient, type Session } from '@supabase/supabase-js'
 
 export const supabase = createClient(
