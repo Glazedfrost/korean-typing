@@ -2,6 +2,7 @@ import vocabExtended from "./korean_vocabulary_extended.json";
 
 // Unified word shape used by the typing game.
 export type Word = {
+  id: string; // Unique identifier
   korean: string;
   en: string;
   zh: string | null;
@@ -25,7 +26,8 @@ type RawVocabEntry = {
 
 // Full extended vocabulary list used by the app.
 export const allWords: Word[] = (vocabExtended as RawVocabEntry[]).map(
-  (item) => ({
+  (item, index) => ({
+    id: `word_${index}_${item.korean}`, // Create unique ID from index + korean text
     korean: item.korean,
     en: item.en,
     zh: item.zh,

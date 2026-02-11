@@ -2,6 +2,19 @@
 
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { allWords, type Word } from "../data/words";
+import { 
+  onAuthStateChange,
+  signIn, 
+  signOut, 
+  signUp, 
+  fetchUserStats, 
+  upsertUserStats,
+  fetchLearnedWords,
+  fetchReviewWords,
+  addLearnedWord,
+  addReviewWord,
+  type UserStats 
+} from "../lib/supabase";
 
 // Game modes:
 // - "copy": show the Korean word and ask the user to copy it
@@ -130,7 +143,8 @@ function KoreanWordDisplay({
 }
 
 // Main typing game component. Manages the current word, input,
-// error count, and game mode.
+// error count, and game mode. Integrates with Supabase for user progress tracking.
+// Recall Mode Features: Learned/Failed words tracking, smart word pool management.
 export default function TypingGame() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [input, setInput] = useState("");
@@ -155,14 +169,41 @@ export default function TypingGame() {
     useState(false);
   const [maxLevelUnlocked, setMaxLevelUnlocked] = useState(1);
 
+  // ============================================================================
+  // Recall Mode: Learned/Failed Words Tracking (Persisted in Supabase)
+  // ============================================================================
+  const [learnedWords, setLearnedWords] = useState<Word[]>([]);
+  const [reviewWords, setReviewWords] = useState<Word[]>([]);
+  const [failedWordsRequeueCount, setFailedWordsRequeueCount] = useState<
+    Map<string, number>
+  >(new Map());
+  const [showTabsUI, setShowTabsUI] = useState(false);
+  const [activeTab, setActiveTab] = useState<"learned" | "to-review">("learned");
+
+  // ============================================================================
+  // Supabase Auth State
+  // ============================================================================
+  const [user, setUser] = useState<any>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
+  const [showAuthForm, setShowAuthForm] = useState(false);
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [isSubmittingAuth, setIsSubmittingAuth] = useState(false);
+
   // Keep a ref to the timeout so we can clear it on unmount
   const nextWordTimeoutRef = useRef<number | null>(null);
+  // Track if we need to save progress (prevents too many saves)
+  const saveTimeoutRef = useRef<number | null>(null);
 
   // Build the word list from the extended dataset and the current filters.
+  // NOTE: In Recall Mode, we do NOT exclude learned words from this list.
+  // Instead, we manage which words to show via a separate mechanism.
   const wordList: Word[] = useMemo(() => {
     const band = FREQUENCY_BANDS.find((b) => b.id === frequencyBandId);
 
-    return allWords.filter((w) => {
+    const filtered = allWords.filter((w) => {
       // Complexity filter
       if (
         complexityFilter !== "all" &&
@@ -189,9 +230,48 @@ export default function TypingGame() {
 
       return true;
     });
+
+    console.log(
+      `[WordList] Filters: complexity=${complexityFilter}, frequency=${frequencyBandId}, class=${classificationFilter} => ${filtered.length} words`
+    );
+
+    return filtered;
   }, [complexityFilter, frequencyBandId, classificationFilter]);
 
-  const currentWord: Word | undefined = wordList[currentIndex];
+  // Get next valid word (skip learned words in Recall Mode)
+  const getValidCurrentWord = (): Word | undefined => {
+    if (wordList.length === 0) {
+      console.warn('[Game] No words available in current filter set');
+      return undefined;
+    }
+
+    // Ensure currentIndex is within bounds
+    const safeIndex = currentIndex < wordList.length ? currentIndex : currentIndex % wordList.length;
+
+    const learnedIds = new Set(learnedWords.map((w) => w.id));
+    let idx = safeIndex;
+    let attempts = 0;
+    const maxAttempts = wordList.length;
+
+    console.log(
+      `[GetValidWord] currentIndex=${currentIndex}, safeIndex=${safeIndex}, learned=${learnedWords.length}, pool=${wordList.length}`
+    );
+
+    while (attempts < maxAttempts) {
+      const word = wordList[idx % wordList.length];
+      if (mode === "copy" || !learnedIds.has(word.id)) {
+        console.log(`[GetValidWord] Found valid word: ${word.korean} at index ${idx % wordList.length}`);
+        return word;
+      }
+      idx++;
+      attempts++;
+    }
+
+    console.warn('[GetValidWord] No valid words found after checking entire pool');
+    return undefined;
+  };
+
+  const currentWord: Word | undefined = getValidCurrentWord();
 
   // Derive current "level" from complexity * frequency band, e.g.
   // Level 1: A + 1–500, Level 2: A + 501–1000, etc.
@@ -214,15 +294,200 @@ export default function TypingGame() {
 
   // Clean up any pending timeout when the component unmounts
   useEffect(() => {
+    console.log(`[TypingGame] Component mounted, allWords loaded: ${allWords.length} words`);
     return () => {
       if (nextWordTimeoutRef.current !== null) {
         window.clearTimeout(nextWordTimeoutRef.current);
       }
+      if (saveTimeoutRef.current !== null) {
+        window.clearTimeout(saveTimeoutRef.current);
+      }
     };
   }, []);
 
-  // Whenever filters change, reset progress so the user starts
-  // cleanly on the new subset of words.
+  // ============================================================================
+  // Load current user and their progress on mount + Fetch learned/review words
+  // ============================================================================
+  useEffect(() => {
+    console.log('[TypingGame] Setting up auth listener');
+    
+    // Listen to auth state changes (handles login, logout, session persist)
+    const unsubscribe = onAuthStateChange(async (session) => {
+      console.log('[TypingGame] Auth state changed, session:', session?.user?.email || 'no user');
+      
+      if (session?.user) {
+        setUser(session.user);
+
+        // Fetch user's saved stats
+        const { data: userStats, error: statsError } = await fetchUserStats(
+          session.user.id
+        );
+
+        if (!statsError && userStats) {
+          // Load saved progress
+          console.log('[TypingGame] Loading user stats:', userStats);
+          setScore(userStats.total_score);
+          setMaxStreak(userStats.highest_streak);
+          setMaxLevelUnlocked(userStats.current_level);
+          
+          // Recalculate accuracy from saved values
+          if (userStats.total_words_completed > 0) {
+            const calculatedCorrect = Math.round(
+              (userStats.accuracy / 100) * userStats.total_words_completed
+            );
+            setCorrectAnswers(calculatedCorrect);
+            setTotalAttempts(userStats.total_words_completed);
+          }
+        }
+
+        // Fetch learned words from Supabase
+        const { data: learnedData } = await fetchLearnedWords(session.user.id);
+        if (learnedData && learnedData.length > 0) {
+          setLearnedWords(learnedData.map((lw) => lw.word_data));
+          console.log('[TypingGame] Loaded learned words:', learnedData.length);
+        }
+
+        // Fetch review words (failed) from Supabase
+        const { data: reviewData } = await fetchReviewWords(session.user.id);
+        if (reviewData && reviewData.length > 0) {
+          setReviewWords(reviewData.map((rw) => rw.word_data));
+          console.log('[TypingGame] Loaded review words:', reviewData.length);
+        }
+      } else {
+        console.log('[TypingGame] No user session, clearing state');
+        setUser(null);
+      }
+
+      setIsAuthLoading(false);
+    });
+
+    // Cleanup listener on unmount
+    return () => unsubscribe();
+  }, []);
+
+  // ============================================================================
+  // Auth handlers
+  // ============================================================================
+  const handleSignUp = async () => {
+    setAuthError("");
+    if (!authEmail || !authPassword) {
+      setAuthError("Email and password required");
+      return;
+    }
+
+    setIsSubmittingAuth(true);
+    const { data, error } = await signUp(authEmail, authPassword);
+    setIsSubmittingAuth(false);
+
+    if (error) {
+      console.error('[TypingGame] Signup error:', error);
+      setAuthError(error.message);
+    } else {
+      console.log('[TypingGame] Signup successful');
+      // Clear form
+      setAuthEmail("");
+      setAuthPassword("");
+      setShowAuthForm(false);
+      // Auth listener will handle setting user state
+    }
+  };
+
+  const handleSignIn = async () => {
+    setAuthError("");
+    if (!authEmail || !authPassword) {
+      setAuthError("Email and password required");
+      return;
+    }
+
+    setIsSubmittingAuth(true);
+    const { data, error } = await signIn(authEmail, authPassword);
+    setIsSubmittingAuth(false);
+
+    if (error) {
+      console.error('[TypingGame] Signin error:', error);
+      setAuthError(error.message);
+    } else {
+      console.log('[TypingGame] Signin successful');
+      // Clear form
+      setAuthEmail("");
+      setAuthPassword("");
+      setShowAuthForm(false);
+      // Auth listener will handle setting user state and loading stats
+    }
+  };
+
+  const handleLogout = async () => {
+    const { error } = await signOut();
+    if (error) {
+      console.error('[TypingGame] Logout error:', error);
+    } else {
+      console.log('[TypingGame] Logout successful');
+      // Auth listener will handle clearing user state
+      setShowAuthForm(false);
+      // Reset game state
+      setCurrentIndex(0);
+      setInput("");
+      setErrors(0);
+      setTotalAttempts(0);
+      setCorrectAnswers(0);
+      setCurrentStreak(0);
+      setMaxStreak(0);
+      setScore(0);
+      setMaxLevelUnlocked(1);
+    }
+  };
+
+  // ============================================================================
+  // Save progress to Supabase (called after each word submission)
+  // ============================================================================
+  const saveProgressToSupabase = async () => {
+    if (!user) {
+      console.log('[TypingGame] No user logged in, skipping save');
+      return;
+    }
+
+    // Debounce saves to avoid too many requests
+    if (saveTimeoutRef.current) {
+      window.clearTimeout(saveTimeoutRef.current);
+    }
+
+    saveTimeoutRef.current = window.setTimeout(async () => {
+      const accuracy = totalAttempts === 0 ? 0 : Math.round((correctAnswers / totalAttempts) * 100);
+
+      console.log('[TypingGame] Auto-saving progress to Supabase:', {
+        user_id: user.id,
+        total_score: score,
+        highest_streak: maxStreak,
+        total_words_completed: totalAttempts,
+        accuracy: accuracy,
+        current_level: currentLevel ?? maxLevelUnlocked,
+      });
+
+      const { error } = await upsertUserStats(user.id, {
+        total_score: score,
+        highest_streak: maxStreak,
+        total_words_completed: totalAttempts,
+        accuracy: accuracy,
+        current_level: currentLevel ?? maxLevelUnlocked,
+      });
+
+      if (error) {
+        console.error('[TypingGame] Error saving progress:', error);
+      } else {
+        console.log('[TypingGame] Progress saved successfully');
+      }
+
+      saveTimeoutRef.current = null;
+    }, 1000); // Wait 1 second before saving to batch updates
+  };
+
+  // Auto-save progress whenever score, streak, or attempts change
+  useEffect(() => {
+    saveProgressToSupabase();
+  }, [score, maxStreak, totalAttempts, correctAnswers, user]);
+
+  // When filters change, reset game position but preserve learned/review words
+  // (they should persist from Supabase, not reset)
   useEffect(() => {
     if (nextWordTimeoutRef.current !== null) {
       window.clearTimeout(nextWordTimeoutRef.current);
@@ -233,17 +498,20 @@ export default function TypingGame() {
     setErrors(0);
     setMadeMistakeOnCurrentWord(false);
     setJustCompleted(false);
+    // NOTE: Do NOT reset learnedWords or reviewWords - they persist from Supabase
   }, [complexityFilter, frequencyBandId, classificationFilter]);
 
-  // Switch between Copy and Recall modes. We reset the input for clarity
-  // but keep the current word and error count.
+  // Switch between Copy and Recall modes
   const handleModeChange = (nextMode: GameMode) => {
     setMode(nextMode);
     setInput("");
     setJustCompleted(false);
+    // NOTE: Do NOT reset learned/review words when switching modes
   };
 
-  // Handle typing in the input box and count new character-level errors.
+  // Handle typing in the input box.
+  // In Copy Mode: count errors during typing
+  // In Recall Mode: do NOT count errors during typing (only on Enter submission)
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!currentWord) return;
 
@@ -256,8 +524,11 @@ export default function TypingGame() {
       next = next.slice(0, target.length);
     }
 
-    // Only count NEW errors for newly added characters (not deletions)
-    if (next.length > previous.length) {
+    // ============================================================================
+    // In Copy Mode: Count errors during typing for live feedback
+    // In Recall Mode: Errors are only counted on Enter submission (see handleSubmitCurrentWord)
+    // ============================================================================
+    if (mode === "copy" && next.length > previous.length) {
       const added = next.slice(previous.length);
       const startIndex = previous.length;
 
@@ -297,8 +568,11 @@ export default function TypingGame() {
       ? 0
       : Math.round((correctAnswers / totalAttempts) * 100);
 
-  // Submit handler triggered explicitly (e.g. Enter key). Validates the current
-  // word, updates accuracy / score / streak, and advances to the next word.
+  // ============================================================================
+  // Submit handler triggered explicitly (e.g. Enter key).
+  // Validates the current word, updates accuracy / score / streak, and advances to next word.
+  // In Recall Mode: saves learned/failed words to Supabase.
+  // ============================================================================
   const handleSubmitCurrentWord = () => {
     if (!currentWord || input.length === 0) return;
 
@@ -307,6 +581,41 @@ export default function TypingGame() {
 
     setTotalAttempts((prev) => prev + 1);
 
+    // ============================================================================
+    // Recall Mode: Track learned/failed words and save to Supabase
+    // ============================================================================
+    if (mode === "recall" && user) {
+      if (isCorrect) {
+        // Correct: Add to learned list (Supabase + local state)
+        setLearnedWords((prev) => {
+          if (!prev.find((w) => w.id === currentWord.id)) {
+            const updated = [...prev, currentWord];
+            addLearnedWord(user.id, currentWord).catch((err) =>
+              console.error('[TypingGame] Error saving learned word:', err)
+            );
+            return updated;
+          }
+          return prev;
+        });
+      } else {
+        // Wrong: Add to review list (Supabase + local state)
+        setReviewWords((prev) => {
+          if (!prev.find((w) => w.id === currentWord.id)) {
+            const updated = [...prev, currentWord];
+            addReviewWord(user.id, currentWord).catch((err) =>
+              console.error('[TypingGame] Error saving review word:', err)
+            );
+            return updated;
+          }
+          return prev;
+        });
+        setErrors(1); // In Recall Mode, count errors only on submission
+      }
+    }
+
+    // ============================================================================
+    // Standard game mechanics (same for both modes)
+    // ============================================================================
     if (isCorrect) {
       // Perfect attempt
       setCorrectAnswers((prev) => prev + 1);
@@ -342,18 +651,112 @@ export default function TypingGame() {
 
     // Clear input immediately so the field is ready for the next word.
     setInput("");
-    setErrors(0);
+    if (mode === "copy") {
+      setErrors(0);
+    }
     setMadeMistakeOnCurrentWord(false);
 
-    // Advance to the next word immediately (no delay) for snappier UX.
-    setCurrentIndex((prevIndex) =>
-      prevIndex + 1 < wordList.length ? prevIndex + 1 : 0
-    );
+    // Advance to the next word, safely wrapping if needed
+    console.log(`[Submit] Advancing from index ${currentIndex}, wordList length=${wordList.length}`);
+    setCurrentIndex((prevIndex) => {
+      if (wordList.length === 0) {
+        console.warn('[Submit] wordList is empty, keeping index at 0');
+        return 0;
+      }
+      const nextIndex = prevIndex + 1 >= wordList.length ? 0 : prevIndex + 1;
+      console.log(`[Submit] New index: ${nextIndex}`);
+      return nextIndex;
+    });
   };
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 text-slate-50">
       <div className="w-full max-w-xl rounded-xl border border-slate-800 bg-slate-900/70 p-6 shadow-xl backdrop-blur">
+        {/* Auth Section */}
+        {isAuthLoading ? (
+          <div className="mb-6 text-center text-sm text-slate-400">
+            Loading...
+          </div>
+        ) : !user ? (
+          <div className="mb-6 border-b border-slate-700 pb-6">
+            <div className="mb-4">
+              <button
+                type="button"
+                onClick={() => setShowAuthForm(!showAuthForm)}
+                className="w-full rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium hover:bg-sky-500 transition"
+              >
+                {showAuthForm ? "Cancel" : "Sign In / Sign Up"}
+              </button>
+            </div>
+
+            {showAuthForm && (
+              <div className="space-y-3">
+                <div>
+                  <input
+                    type="email"
+                    placeholder="Email"
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-50 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/60"
+                  />
+                </div>
+                <div>
+                  <input
+                    type="password"
+                    placeholder="Password"
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-50 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/60"
+                  />
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode("signin");
+                      handleSignIn();
+                    }}
+                    disabled={isSubmittingAuth}
+                    className="flex-1 rounded-lg bg-sky-600 px-3 py-2 text-sm font-medium hover:bg-sky-500 disabled:opacity-50 transition"
+                  >
+                    {isSubmittingAuth ? "..." : "Sign In"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode("signup");
+                      handleSignUp();
+                    }}
+                    disabled={isSubmittingAuth}
+                    className="flex-1 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-medium hover:bg-emerald-500 disabled:opacity-50 transition"
+                  >
+                    {isSubmittingAuth ? "..." : "Sign Up"}
+                  </button>
+                </div>
+
+                {authError && (
+                  <div className="text-xs text-red-400">{authError}</div>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <div className="mb-6 flex items-center justify-between border-b border-slate-700 pb-4">
+            <div className="text-sm text-slate-300">
+              <span className="text-slate-400">Logged in:</span>{" "}
+              {user.email}
+            </div>
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="rounded-lg bg-slate-700 px-3 py-1 text-xs font-medium hover:bg-slate-600 transition"
+            >
+              Logout
+            </button>
+          </div>
+        )}
+
         {/* Header with title, filters, progress and error counter */}
         <div className="mb-4 flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
           <div className="space-y-2">
@@ -471,6 +874,106 @@ export default function TypingGame() {
             Recall Mode
           </button>
         </div>
+
+        {/* Recall Mode: Learned/To Review Tabs */}
+        {mode === "recall" && (
+          <div className="mb-6 space-y-3 border-b border-slate-700 pb-4">
+            <button
+              type="button"
+              onClick={() => setShowTabsUI(!showTabsUI)}
+              className="w-full rounded-lg bg-slate-800 px-3 py-2 text-xs font-medium text-slate-300 hover:bg-slate-700 hover:text-white transition"
+            >
+              {showTabsUI ? "Hide Stats" : "Show Stats"} (Learned: {learnedWords.length} | To Review: {reviewWords.length})
+            </button>
+
+            {showTabsUI && (
+              <div className="space-y-3">
+                {/* Tab Buttons */}
+                <div className="flex gap-2 rounded-lg bg-slate-800 p-1 text-xs font-medium">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("learned")}
+                    className={`flex-1 rounded-md px-3 py-1 transition ${
+                      activeTab === "learned"
+                        ? "bg-emerald-600 text-white shadow-sm"
+                        : "text-slate-300 hover:text-white"
+                    }`}
+                  >
+                    Learned ({learnedWords.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("to-review")}
+                    className={`flex-1 rounded-md px-3 py-1 transition ${
+                      activeTab === "to-review"
+                        ? "bg-amber-600 text-white shadow-sm"
+                        : "text-slate-300 hover:text-white"
+                    }`}
+                  >
+                    To Review ({reviewWords.length})
+                  </button>
+                </div>
+
+                {/* Learned Tab Content */}
+                {activeTab === "learned" && (
+                  <div className="max-h-40 space-y-2 overflow-y-auto rounded-lg bg-slate-800/50 p-3">
+                    {learnedWords.length === 0 ? (
+                      <div className="text-center text-xs text-slate-400">
+                        No learned words yet. Keep typing!
+                      </div>
+                    ) : (
+                      learnedWords.map((word) => (
+                        <div
+                          key={word.id}
+                          className="rounded-md border border-emerald-900/50 bg-emerald-900/20 p-2 text-xs"
+                        >
+                          <div className="font-semibold text-emerald-400">
+                            {word.korean}
+                          </div>
+                          <div className="text-slate-300">
+                            {word.en}
+                            {word.zh && ` / ${word.zh}`}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+
+                {/* To Review Tab Content */}
+                {activeTab === "to-review" && (
+                  <div className="max-h-40 space-y-2 overflow-y-auto rounded-lg bg-slate-800/50 p-3">
+                    {reviewWords.length === 0 ? (
+                      <div className="text-center text-xs text-slate-400">
+                        No review words yet. Great job!
+                      </div>
+                    ) : (
+                      reviewWords.map((word) => (
+                        <div
+                          key={word.id}
+                          className="rounded-md border border-amber-900/50 bg-amber-900/20 p-2 text-xs"
+                        >
+                          <div className="font-semibold text-amber-400">
+                            {word.korean}
+                          </div>
+                          <div className="text-slate-300">
+                            {word.en}
+                            {word.zh && ` / ${word.zh}`}
+                          </div>
+                          {word.hanja && (
+                            <div className="text-slate-400 text-[11px]">
+                              {word.hanja}
+                            </div>
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {currentWord ? (
           <>
