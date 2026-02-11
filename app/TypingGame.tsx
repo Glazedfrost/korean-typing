@@ -472,7 +472,7 @@ export default function TypingGame() {
       });
 
       if (error) {
-        console.error('[TypingGame] Error saving progress:', error);
+        console.error('[TypingGame] Error saving progress:', error?.message ?? error);
       } else {
         console.log('[TypingGame] Progress saved successfully');
       }

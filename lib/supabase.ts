@@ -179,7 +179,11 @@ export async function upsertUserStats(userId: string, stats: Partial<UserStats>)
     .single()
 
   if (error) {
+    // Provide actionable guidance when the table is missing
     console.error('[Supabase DB] Error upserting user stats:', error.message)
+    if (error.message && error.message.includes('Could not find the table')) {
+      console.error('[Supabase DB] It seems the `user_stats` table does not exist or RLS/schema is misconfigured. Please run the setup SQL to create the table and policies.');
+    }
   } else {
     console.log('[Supabase DB] Stats upserted successfully')
   }
@@ -255,15 +259,17 @@ export async function fetchReviewWords(userId: string) {
  */
 export async function addLearnedWord(userId: string, word: Word) {
   console.log('[Supabase DB] Adding learned word:', word.korean)
-  
-  const { error } = await supabase
+  // Use upsert to avoid duplicate-key errors when the same word is learned twice
+  const { data, error } = await supabase
     .from('learned_words')
-    .insert({
+    .upsert({
       user_id: userId,
       word_id: word.id,
       word_data: word,
       learned_at: new Date().toISOString(),
-    })
+    }, { onConflict: 'user_id,word_id' })
+    .select()
+    .single()
 
   if (error) {
     console.error('[Supabase DB] Error adding learned word:', error.message)
@@ -271,7 +277,7 @@ export async function addLearnedWord(userId: string, word: Word) {
     console.log('[Supabase DB] Learned word added successfully')
   }
 
-  return { error }
+  return { data, error }
 }
 
 /**
@@ -281,26 +287,36 @@ export async function addReviewWord(userId: string, word: Word) {
   console.log('[Supabase DB] Adding review word:', word.korean)
   
   // First check if word already exists
-  const { data: existing } = await supabase
+  const { data: existing, error: fetchError } = await supabase
     .from('review_words')
     .select('id, failed_count')
     .eq('user_id', userId)
     .eq('word_id', word.id)
     .single()
 
+  if (fetchError && fetchError.code !== 'PGRST116') {
+    console.error('[Supabase DB] Error checking existing review word:', fetchError.message)
+    return { error: fetchError }
+  }
+
   if (existing) {
     // Update fail count
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('review_words')
-      .update({ failed_count: existing.failed_count + 1 })
+      .update({ failed_count: existing.failed_count + 1, updated_at: new Date().toISOString() })
       .eq('id', existing.id)
-    
+      .select()
+      .single()
+
     if (error) {
       console.error('[Supabase DB] Error updating review word:', error.message)
+      return { data: null, error }
     }
+
+    return { data, error: null }
   } else {
     // Insert new
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from('review_words')
       .insert({
         user_id: userId,
@@ -308,14 +324,18 @@ export async function addReviewWord(userId: string, word: Word) {
         word_data: word,
         failed_count: 1,
         created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
       })
+      .select()
+      .single()
 
     if (error) {
       console.error('[Supabase DB] Error adding review word:', error.message)
+      return { data: null, error }
     }
-  }
 
-  return { error: null }
+    return { data, error: null }
+  }
 }
 
 /**
