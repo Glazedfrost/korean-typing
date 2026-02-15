@@ -752,7 +752,8 @@ export default function TypingGame() {
         const candidate = wordList[(currentIndex + offset) % wordList.length];
         if (!candidate) continue;
         if (candidate.id === currentWord.id) continue; // ensure different word
-        if (mode === "copy" || !learnedIds.has(candidate.id)) return (currentIndex + offset) % wordList.length;
+        // Skip learned words in Recall Mode; `mode` is guaranteed to be "recall" here
+        if (!learnedIds.has(candidate.id)) return (currentIndex + offset) % wordList.length;
       }
 
       // fallback: advance by one (may wrap to same if pool size === 1)
