@@ -59656,7 +59656,7 @@
     "hanja": "祖國統一萬歲",
     "classification": "expression",
     "frequency": null,
-    "complexity": null,
+    "complexity": "D",
     "wordreferencelink": "https://www.wordreference.com/koen/조국통일 만세!"
   },
   {
@@ -59666,7 +59666,7 @@
     "hanja": null,
     "classification": "noun",
     "frequency": null,
-    "complexity": null,
+    "complexity": "D",
     "wordreferencelink": "https://www.wordreference.com/koen/벗꽃"
   },
   {
@@ -59676,7 +59676,7 @@
     "hanja": "共和國永遠主席",
     "classification": "noun",
     "frequency": null,
-    "complexity": null,
+    "complexity": "D",
     "wordreferencelink": "https://www.wordreference.com/koen/공화국의 영원한 주석"
   },
   {
@@ -59686,7 +59686,7 @@
     "hanja": "金日成",
     "classification": "Name",
     "frequency": null,
-    "complexity": null,
+    "complexity": "D",
     "wordreferencelink": "https://www.wordreference.com/koen/영원한 주석 김일성"
   },
   {
@@ -59696,7 +59696,7 @@
     "hanja": "金正日",
     "classification": "Name",
     "frequency": null,
-    "complexity": null,
+    "complexity": "D",
     "wordreferencelink": "https://www.wordreference.com/koen/김정일"
   },
   {
@@ -59706,7 +59706,7 @@
     "hanja": "最高齡道者",
     "classification": "noun",
     "frequency": null,
-    "complexity": null,
+    "complexity": "D",
     "wordreferencelink": null
   },
   {
@@ -59716,7 +59716,7 @@
     "hanja": "偉大한 首領",
     "classification": "noun",
     "frequency": null,
-    "complexity": null,
+    "complexity": "D",
     "wordreferencelink": null
   },
   {
@@ -59726,7 +59726,7 @@
     "hanja": "親愛하다 領導者",
     "classification": "noun",
     "frequency": null,
-    "complexity": null,
+    "complexity": "D",
     "wordreferencelink": null
   },
   {
@@ -59736,7 +59736,7 @@
     "hanja": "金正恩",
     "classification": "Name",
     "frequency": null,
-    "complexity": null,
+    "complexity": "D",
     "wordreferencelink": "https://www.wordreference.com/koen/김정은"
   },
   {
@@ -59746,7 +59746,7 @@
     "hanja": "祖國解放戰爭",
     "classification": "Name",
     "frequency": null,
-    "complexity": null,
+    "complexity": "D",
     "wordreferencelink": "https://www.wordreference.com/koen/조국해방전쟁"
   },
   {
@@ -59756,7 +59756,7 @@
     "hanja": "主體",
     "classification": "noun",
     "frequency": null,
-    "complexity": null,
+    "complexity": "D",
     "wordreferencelink": "https://www.wordreference.com/koen/주체"
   },
   {
@@ -59766,7 +59766,7 @@
     "hanja": null,
     "classification": "Name",
     "frequency": null,
-    "complexity": null,
+    "complexity": "D",
     "wordreferencelink": "https://www.wordreference.com/koen/아리랑"
   },
   {
@@ -59776,7 +59776,7 @@
     "hanja": null,
     "classification": "adjective",
     "frequency": null,
-    "complexity": null,
+    "complexity": "D",
     "wordreferencelink": "https://www.wordreference.com/koen/맵시난다"
   },
   {
@@ -59786,7 +59786,7 @@
     "hanja": null,
     "classification": "expression",
     "frequency": null,
-    "complexity": null,
+    "complexity": "D",
     "wordreferencelink": "https://www.wordreference.com/koen/일없습니다"
   }
 ]

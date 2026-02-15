@@ -34,7 +34,8 @@ export const allWords: Word[] = (vocabExtended as RawVocabEntry[]).map(
     hanja: item.hanja,
     classification: item.classification,
     frequency: item.frequency,
-    complexity: item.complexity,
+    // Normalize complexity: treat null or 'E' as 'D'
+    complexity: (item.complexity === null || item.complexity === "E") ? "D" : item.complexity,
     wordreferencelink: item.wordreferencelink,
   })
 );

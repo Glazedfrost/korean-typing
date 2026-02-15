@@ -232,7 +232,13 @@ export async function upsertUserStats(userId: string, stats: Partial<UserStats>)
   }
 
   const errMsg = (error.message ?? String(error)).toLowerCase()
-  console.error('[Supabase DB] Error upserting user stats:', errMsg)
+  // Log full error details + payload to make schema / permission failures obvious in logs
+  console.error('[Supabase DB] Error upserting user stats:', errMsg, {
+    code: (error as any)?.code,
+    details: (error as any)?.details,
+    hint: (error as any)?.hint,
+    payload,
+  })
 
   // If the error indicates missing canonical columns, try legacy column names
   if (errMsg.includes('current_level') || errMsg.includes('total_score') || errMsg.includes('total_words_completed')) {

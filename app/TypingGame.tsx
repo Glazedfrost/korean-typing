@@ -22,7 +22,7 @@ import {
 type GameMode = "copy" | "recall";
 
 // Filters for the extended vocabulary dataset.
-type ComplexityFilter = "all" | "A" | "B" | "C" | "D" | "E";
+type ComplexityFilter = "all" | "A" | "B" | "C" | "D";
 type FrequencyBandId =
   | "all"
   | "1-500"
@@ -68,7 +68,7 @@ const FREQUENCY_BANDS: {
   { id: "5001-6000", label: "5001–6000", min: 5001, max: 6000 },
 ];
 
-const COMPLEXITY_SEQUENCE: ComplexityFilter[] = ["A", "B", "C", "D", "E"];
+const COMPLEXITY_SEQUENCE: ComplexityFilter[] = ["A", "B", "C", "D"];
 const FREQUENCY_SEQUENCE: FrequencyBandId[] = [
   "1-500",
   "501-1000",
@@ -204,12 +204,10 @@ export default function TypingGame() {
     const band = FREQUENCY_BANDS.find((b) => b.id === frequencyBandId);
 
     const filtered = allWords.filter((w) => {
-      // Complexity filter
-      if (
-        complexityFilter !== "all" &&
-        w.complexity &&
-        w.complexity !== complexityFilter
-      ) {
+      // Complexity filter — treat null or legacy 'E' as 'D'
+      const rawComplexity = (w.complexity ?? "D") as string;
+      const wComplexity = rawComplexity === "E" ? "D" : rawComplexity;
+      if (complexityFilter !== "all" && wComplexity !== complexityFilter) {
         return false;
       }
 
@@ -291,6 +289,29 @@ export default function TypingGame() {
 
     return cIndex * FREQUENCY_SEQUENCE.length + fIndex + 1;
   }, [complexityFilter, frequencyBandId, wordList.length]);
+
+  // Helper: total number of concrete levels (frequency changes first, then complexity)
+  const MAX_LEVEL = COMPLEXITY_SEQUENCE.length * FREQUENCY_SEQUENCE.length;
+
+  // Convert a 1-based level to { complexity, frequency }
+  function levelToFilters(level: number): { complexity: ComplexityFilter; frequency: FrequencyBandId } {
+    const l = Math.max(1, Math.min(level || 1, MAX_LEVEL));
+    const n = l - 1; // zero-based
+    const cIndex = Math.floor(n / FREQUENCY_SEQUENCE.length);
+    const fIndex = n % FREQUENCY_SEQUENCE.length;
+    return {
+      complexity: COMPLEXITY_SEQUENCE[cIndex] ?? COMPLEXITY_SEQUENCE[0],
+      frequency: FREQUENCY_SEQUENCE[fIndex] ?? FREQUENCY_SEQUENCE[0],
+    };
+  }
+
+  // Convert current filters to a 1-based level (returns null if filters are 'all')
+  function filtersToLevel(c: ComplexityFilter, f: FrequencyBandId): number | null {
+    const cIndex = COMPLEXITY_SEQUENCE.indexOf(c);
+    const fIndex = FREQUENCY_SEQUENCE.indexOf(f);
+    if (cIndex === -1 || fIndex === -1) return null;
+    return cIndex * FREQUENCY_SEQUENCE.length + fIndex + 1;
+  }
 
   // Clean up any pending timeout when the component unmounts
   useEffect(() => {
@@ -778,7 +799,6 @@ export default function TypingGame() {
                   <option value="B">B</option>
                   <option value="C">C</option>
                   <option value="D">D</option>
-                  <option value="E">E (hardest)</option>
                 </select>
               </label>
               <label className="flex items-center gap-1">
@@ -816,6 +836,31 @@ export default function TypingGame() {
                   <option value="auxiliary verb">Auxiliary verb</option>
                   <option value="pronoun">Pronoun</option>
                   <option value="interjection">Interjection</option>
+                </select>
+              </label>
+
+              {/* Level selector: maps to (complexity, frequency) with frequency changing fastest */}
+              <label className="flex items-center gap-1">
+                <span className="text-slate-400">Level</span>
+                <select
+                  value={`${currentLevel ?? 1}`}
+                  onChange={(e) => {
+                    const lvl = Number(e.target.value) || 1;
+                    const { complexity, frequency } = levelToFilters(lvl);
+                    setComplexityFilter(complexity);
+                    setFrequencyBandId(frequency);
+                  }}
+                  className="rounded-md border border-slate-700 bg-slate-900 px-2 py-1 text-xs"
+                >
+                  {Array.from({ length: MAX_LEVEL }, (_, i) => i + 1).map((lvl) => {
+                    const { complexity, frequency } = levelToFilters(lvl);
+                    const freqLabel = FREQUENCY_BANDS.find((b) => b.id === frequency)?.label ?? frequency;
+                    return (
+                      <option key={lvl} value={lvl}>
+                        {`Level ${lvl} — ${complexity} / ${freqLabel}`}
+                      </option>
+                    );
+                  })}
                 </select>
               </label>
             </div>
