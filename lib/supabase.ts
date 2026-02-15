@@ -21,6 +21,24 @@ export interface UserStats {
   updated_at: string
 }
 
+// Helper: normalize a DB row (handles legacy/alternate column names)
+function mapDbUserStats(row: any): UserStats | null {
+  if (!row || !row.user_id) return null
+
+  return {
+    id: row.id,
+    user_id: row.user_id,
+    // support both new (`total_score`) and legacy (`score`) column names
+    total_score: (row.total_score ?? row.score) as number ?? 0,
+    highest_streak: (row.highest_streak ?? row.streak) as number ?? 0,
+    // total_words_completed may be absent in older schemas
+    total_words_completed: (row.total_words_completed ?? row.total_words ?? 0) as number,
+    accuracy: (row.accuracy ?? row.acc ?? 0) as number,
+    current_level: (row.current_level ?? row.level) as number ?? 1,
+    updated_at: row.updated_at ?? row.updatedAt ?? new Date().toISOString(),
+  }
+}
+
 /**
  * Listen to auth state changes (login, logout, session refresh)
  * Returns unsubscribe function and current session
@@ -108,7 +126,8 @@ export async function signOut() {
  * This ensures the user_id is in the table for future updates
  */
 export async function createInitialUserStats(userId: string) {
-  const { error } = await supabase
+  // Primary attempt: canonical column names
+  let { error } = await supabase
     .from('user_stats')
     .insert({
       user_id: userId,
@@ -117,16 +136,44 @@ export async function createInitialUserStats(userId: string) {
       total_words_completed: 0,
       accuracy: 0,
       current_level: 1,
+      updated_at: new Date().toISOString(),
     })
 
-  if (error) {
-    console.error('[Supabase DB] Error creating initial user_stats:', error.message)
-  } else {
+  if (!error) {
     console.log('[Supabase DB] Initial user_stats row created for user:', userId)
+    return { error: null }
   }
 
+  const errMsg = (error.message ?? String(error)).toLowerCase()
+
+  // Fallback: some deployments use legacy column names (score, streak, level)
+  if (errMsg.includes('current_level') || errMsg.includes('total_score') || errMsg.includes('total_words_completed')) {
+    console.warn('[Supabase DB] Falling back to legacy user_stats column names (score/streak/level)')
+
+    const { error: legacyErr } = await supabase
+      .from('user_stats')
+      .insert({
+        user_id: userId,
+        score: 0,
+        streak: 0,
+        total_words_completed: 0,
+        accuracy: 0,
+        level: 1,
+        updated_at: new Date().toISOString(),
+      })
+
+    if (!legacyErr) {
+      console.log('[Supabase DB] Initial user_stats (legacy columns) created for user:', userId)
+      return { error: null }
+    }
+
+    console.error('[Supabase DB] Legacy insert also failed:', legacyErr.message ?? legacyErr)
+    return { error: legacyErr }
+  }
+
+  console.error('[Supabase DB] Error creating initial user_stats:', error.message ?? error)
   return { error }
-}
+} 
 
 // ============================================================================
 // User Stats Database Functions
@@ -152,13 +199,16 @@ export async function fetchUserStats(userId: string) {
       await createInitialUserStats(userId)
       return { data: null, error: null }
     }
+
     console.error('[Supabase DB] Error fetching user stats:', error.message)
     return { data: null, error }
   }
 
-  console.log('[Supabase DB] Stats fetched successfully')
-  return { data: data as UserStats, error: null }
-}
+  // Normalize row (support legacy column names)
+  const normalized = mapDbUserStats(data as any)
+  console.log('[Supabase DB] Stats fetched successfully (normalized)')
+  return { data: normalized, error: null }
+} 
 
 /**
  * Upsert (insert or update) user stats
@@ -167,29 +217,148 @@ export async function fetchUserStats(userId: string) {
  */
 export async function upsertUserStats(userId: string, stats: Partial<UserStats>) {
   console.log('[Supabase DB] Upserting stats for user:', userId, stats)
-  
-  const { data, error } = await supabase
+
+  // Primary attempt (canonical columns)
+  const payload = { user_id: userId, ...stats, updated_at: new Date().toISOString() }
+  let { data, error } = await supabase
     .from('user_stats')
-    .upsert({
-      user_id: userId,
-      ...stats,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'user_id' })
+    .upsert(payload, { onConflict: 'user_id' })
     .select()
     .single()
 
-  if (error) {
-    // Provide actionable guidance when the table is missing
-    console.error('[Supabase DB] Error upserting user stats:', error.message)
-    if (error.message && error.message.includes('Could not find the table')) {
-      console.error('[Supabase DB] It seems the `user_stats` table does not exist or RLS/schema is misconfigured. Please run the setup SQL to create the table and policies.');
-    }
-  } else {
-    console.log('[Supabase DB] Stats upserted successfully')
+  if (!error) {
+    console.log('[Supabase DB] Stats upserted successfully (canonical)')
+    return { data: mapDbUserStats(data as any), error: null }
   }
 
-  return { data: data as UserStats | null, error }
-}
+  const errMsg = (error.message ?? String(error)).toLowerCase()
+  console.error('[Supabase DB] Error upserting user stats:', errMsg)
+
+  // If the error indicates missing canonical columns, try legacy column names
+  if (errMsg.includes('current_level') || errMsg.includes('total_score') || errMsg.includes('total_words_completed')) {
+    console.warn('[Supabase DB] Detected legacy schema for user_stats; attempting legacy upsert')
+
+    const legacyPayload: any = {
+      user_id: userId,
+      score: stats.total_score ?? 0,
+      streak: stats.highest_streak ?? 0,
+      accuracy: stats.accuracy ?? 0,
+      level: stats.current_level ?? 1,
+      updated_at: new Date().toISOString(),
+    }
+
+    const { data: legacyData, error: legacyErr } = await supabase
+      .from('user_stats')
+      .upsert(legacyPayload, { onConflict: 'user_id' })
+      .select()
+      .single()
+
+    if (!legacyErr) {
+      console.log('[Supabase DB] Stats upserted successfully (legacy columns)')
+      return { data: mapDbUserStats(legacyData as any), error: null }
+    }
+
+    console.error('[Supabase DB] Legacy upsert failed:', legacyErr.message ?? legacyErr)
+    // fall through to other fallback logic
+  }
+
+  // Helpful guidance for missing table vs missing unique constraint
+  if (errMsg.includes("could not find the table") || errMsg.includes('relation "user_stats" does not exist')) {
+    console.error('[Supabase DB] The `user_stats` table appears to be missing. Run the setup SQL to create it.');
+    return { data: null, error }
+  }
+
+  // Fallback: no UNIQUE index / ON CONFLICT not available — do select -> insert/update
+  if (errMsg.includes('no unique or exclusion constraint') || errMsg.includes('on conflict')) {
+    console.warn('[Supabase DB] Falling back to select/insert/update because ON CONFLICT is not available for `user_id`.')
+
+    // Check whether a row already exists for this user
+    const { data: existing, error: selectErr } = await supabase
+      .from('user_stats')
+      .select('*')
+      .eq('user_id', userId)
+      .single()
+
+    if (selectErr) {
+      // If no existing row, create one (try canonical then legacy)
+      if (selectErr.code === 'PGRST116') {
+        const { data: inserted, error: insertErr } = await supabase
+          .from('user_stats')
+          .insert(payload)
+          .select()
+          .single()
+
+        if (!insertErr) {
+          return { data: mapDbUserStats(inserted as any), error: null }
+        }
+
+        // Try legacy insert if canonical failed due to schema
+        const insertErrMsg = (insertErr.message ?? String(insertErr)).toLowerCase()
+        if (insertErrMsg.includes('current_level') || insertErrMsg.includes('total_score')) {
+          const { data: legacyInserted, error: legacyInsertErr } = await supabase
+            .from('user_stats')
+            .insert({
+              user_id: userId,
+              score: stats.total_score ?? 0,
+              streak: stats.highest_streak ?? 0,
+              accuracy: stats.accuracy ?? 0,
+              level: stats.current_level ?? 1,
+              updated_at: new Date().toISOString(),
+            })
+            .select()
+            .single()
+
+          if (!legacyInsertErr) return { data: mapDbUserStats(legacyInserted as any), error: null }
+          console.error('[Supabase DB] Error inserting (legacy) user_stats fallback:', legacyInsertErr.message ?? legacyInsertErr)
+          return { data: null, error: legacyInsertErr }
+        }
+
+        console.error('[Supabase DB] Error inserting user_stats fallback:', insertErr.message ?? insertErr)
+        return { data: null, error: insertErr }
+      }
+
+      console.error('[Supabase DB] Error checking existing user_stats row:', selectErr.message ?? selectErr)
+      return { data: null, error: selectErr }
+    }
+
+    // Row exists — update it using canonical columns where possible
+    const { data: updated, error: updateErr } = await supabase
+      .from('user_stats')
+      .update({ ...stats, updated_at: new Date().toISOString() })
+      .eq('user_id', userId)
+      .select()
+      .single()
+
+    if (!updateErr) return { data: mapDbUserStats(updated as any), error: null }
+
+    // Try legacy update if canonical update fails due to schema
+    const updateErrMsg = (updateErr.message ?? String(updateErr)).toLowerCase()
+    if (updateErrMsg.includes('current_level') || updateErrMsg.includes('total_score')) {
+      const { data: legacyUpdated, error: legacyUpdateErr } = await supabase
+        .from('user_stats')
+        .update({
+          score: stats.total_score ?? 0,
+          streak: stats.highest_streak ?? 0,
+          accuracy: stats.accuracy ?? 0,
+          level: stats.current_level ?? 1,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('user_id', userId)
+        .select()
+        .single()
+
+      if (!legacyUpdateErr) return { data: mapDbUserStats(legacyUpdated as any), error: null }
+      console.error('[Supabase DB] Error updating user_stats fallback (legacy):', legacyUpdateErr.message ?? legacyUpdateErr)
+      return { data: null, error: legacyUpdateErr }
+    }
+
+    console.error('[Supabase DB] Error updating user_stats fallback:', updateErr.message ?? updateErr)
+    return { data: null, error: updateErr }
+  }
+
+  // Other errors — return as-is
+  return { data: null, error }
+} 
 
 // ============================================================================
 // Learned & Review Words Tracking (Recall Mode)
@@ -217,21 +386,35 @@ export interface ReviewWord {
  */
 export async function fetchLearnedWords(userId: string) {
   console.log('[Supabase DB] Fetching learned words for user:', userId)
-  
-  const { data, error } = await supabase
+
+  // Primary: order by learned_at (preferred)
+  let res = await supabase
     .from('learned_words')
     .select('*')
     .eq('user_id', userId)
     .order('learned_at', { ascending: false })
 
-  if (error) {
-    console.error('[Supabase DB] Error fetching learned words:', error.message)
-    return { data: [], error }
+  if (res.error) {
+    const msg = (res.error.message ?? String(res.error)).toLowerCase()
+    // Fallback: some schemas use `created_at` instead of `learned_at`
+    if (msg.includes('learned_at') || msg.includes("could not find the 'learned_at'")) {
+      console.warn('[Supabase DB] learned_at missing; retrying fetchLearnedWords ordering by created_at')
+      res = await supabase
+        .from('learned_words')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false })
+    }
   }
 
-  console.log('[Supabase DB] Learned words fetched:', data?.length)
-  return { data: (data as LearnedWord[]) || [], error: null }
-}
+  if (res.error) {
+    console.error('[Supabase DB] Error fetching learned words:', res.error.message)
+    return { data: [], error: res.error }
+  }
+
+  console.log('[Supabase DB] Learned words fetched:', res.data?.length)
+  return { data: (res.data as LearnedWord[]) || [], error: null }
+} 
 
 /**
  * Fetch all review words (failed) for the user
@@ -250,8 +433,21 @@ export async function fetchReviewWords(userId: string) {
     return { data: [], error }
   }
 
-  console.log('[Supabase DB] Review words fetched:', data?.length)
-  return { data: (data as ReviewWord[]) || [], error: null }
+  const rows = (data as ReviewWord[]) || []
+
+  // Deduplicate by word_id (defensive: server may have duplicate rows)
+  const deduped = new Map<string, ReviewWord>()
+  for (const r of rows) {
+    if (!deduped.has(r.word_id)) {
+      deduped.set(r.word_id, r)
+    } else {
+      console.warn('[Supabase DB] Duplicate review_words row detected for', userId, r.word_id)
+    }
+  }
+
+  const result = Array.from(deduped.values())
+  console.log('[Supabase DB] Review words fetched (deduped):', result.length)
+  return { data: result, error: null }
 }
 
 /**
@@ -259,8 +455,9 @@ export async function fetchReviewWords(userId: string) {
  */
 export async function addLearnedWord(userId: string, word: Word) {
   console.log('[Supabase DB] Adding learned word:', word.korean)
-  // Use upsert to avoid duplicate-key errors when the same word is learned twice
-  const { data, error } = await supabase
+
+  // Try canonical payload first (learned_at)
+  let { data, error } = await supabase
     .from('learned_words')
     .upsert({
       user_id: userId,
@@ -271,14 +468,35 @@ export async function addLearnedWord(userId: string, word: Word) {
     .select()
     .single()
 
+  // If learned_at column is missing, retry using created_at (legacy schema)
   if (error) {
-    console.error('[Supabase DB] Error adding learned word:', error.message)
+    const msg = (error.message ?? String(error)).toLowerCase()
+    if (msg.includes('learned_at') || msg.includes("could not find the 'learned_at'")) {
+      console.warn('[Supabase DB] learned_at missing; retrying addLearnedWord with created_at')
+      const retry = await supabase
+        .from('learned_words')
+        .upsert({
+          user_id: userId,
+          word_id: word.id,
+          word_data: word,
+          created_at: new Date().toISOString(),
+        }, { onConflict: 'user_id,word_id' })
+        .select()
+        .single()
+
+      data = retry.data
+      error = retry.error
+    }
+  }
+
+  if (error) {
+    console.error('[Supabase DB] Error adding learned word:', error.message ?? error)
   } else {
     console.log('[Supabase DB] Learned word added successfully')
   }
 
   return { data, error }
-}
+} 
 
 /**
  * Add a word to review words list (or increment if already exists)
@@ -287,17 +505,61 @@ export async function addReviewWord(userId: string, word: Word) {
   console.log('[Supabase DB] Adding review word:', word.korean)
   
   // First check if word already exists
-  const { data: existing, error: fetchError } = await supabase
+  // Query all rows matching (user_id, word_id) defensively (server may have duplicates)
+  const { data: rows, error: fetchError } = await supabase
     .from('review_words')
-    .select('id, failed_count')
+    .select('id, failed_count, word_id')
     .eq('user_id', userId)
     .eq('word_id', word.id)
-    .single()
 
-  if (fetchError && fetchError.code !== 'PGRST116') {
+  if (fetchError) {
     console.error('[Supabase DB] Error checking existing review word:', fetchError.message)
     return { error: fetchError }
   }
+
+  const matched = (rows as any[]) || []
+
+  if (matched.length > 1) {
+    // Server-side duplicates detected — coalesce into one row (sum failed_count)
+    const totalFails = matched.reduce((s, r) => s + (r.failed_count || 0), 0)
+    const keeper = matched[0]
+
+    // Update keeper with aggregated failed_count
+    const { error: updErr } = await supabase
+      .from('review_words')
+      .update({ failed_count: totalFails, updated_at: new Date().toISOString() })
+      .eq('id', keeper.id)
+
+    if (updErr) {
+      console.error('[Supabase DB] Error consolidating duplicate review rows:', updErr.message)
+      // continue — we'll still try to insert/update normally
+    }
+
+    // Delete the duplicate rows (keep the keeper)
+    const duplicateIds = matched.slice(1).map((r) => r.id)
+    const { error: delErr } = await supabase
+      .from('review_words')
+      .delete()
+      .in('id', duplicateIds)
+
+    if (delErr) {
+      console.error('[Supabase DB] Error deleting duplicate review rows:', delErr.message)
+    }
+
+    // Reload the keeper row to use below
+    const { data: reloaded } = await supabase
+      .from('review_words')
+      .select('id, failed_count')
+      .eq('id', keeper.id)
+      .single()
+
+    if (reloaded) {
+      matched.length = 1
+      matched[0] = reloaded
+    }
+  }
+
+  const existing = matched[0] ?? null
 
   if (existing) {
     // Update fail count
@@ -314,28 +576,28 @@ export async function addReviewWord(userId: string, word: Word) {
     }
 
     return { data, error: null }
-  } else {
-    // Insert new
-    const { data, error } = await supabase
-      .from('review_words')
-      .insert({
-        user_id: userId,
-        word_id: word.id,
-        word_data: word,
-        failed_count: 1,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-      .select()
-      .single()
-
-    if (error) {
-      console.error('[Supabase DB] Error adding review word:', error.message)
-      return { data: null, error }
-    }
-
-    return { data, error: null }
   }
+
+  // Insert new (use upsert to avoid duplicate-key race conditions)
+  const { data, error } = await supabase
+    .from('review_words')
+    .upsert({
+      user_id: userId,
+      word_id: word.id,
+      word_data: word,
+      failed_count: 1,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'user_id,word_id' })
+    .select()
+    .single()
+
+  if (error) {
+    console.error('[Supabase DB] Error adding review word:', error.message)
+    return { data: null, error }
+  }
+
+  return { data, error: null }
 }
 
 /**
