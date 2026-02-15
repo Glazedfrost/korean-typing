@@ -152,6 +152,8 @@ export default function TypingGame() {
   const [errors, setErrors] = useState(0);
   const [mode, setMode] = useState<GameMode>("copy");
   const [justCompleted, setJustCompleted] = useState(false);
+  const [skipNotice, setSkipNotice] = useState(false);
+  const [forcedIndex, setForcedIndex] = useState<number | null>(null);
   const [complexityFilter, setComplexityFilter] =
     useState<ComplexityFilter>("A");
   const [frequencyBandId, setFrequencyBandId] =
@@ -243,6 +245,15 @@ export default function TypingGame() {
       return undefined;
     }
 
+    // If a forced index was set (Skip), return that immediately for one render.
+    if (forcedIndex !== null && typeof forcedIndex === 'number') {
+      const forced = wordList[forcedIndex];
+      if (forced) {
+        console.log('[GetValidWord] Using forced index from skip:', forcedIndex, forced.korean);
+        return forced;
+      }
+    }
+
     // Ensure currentIndex is within bounds
     const safeIndex = currentIndex < wordList.length ? currentIndex : currentIndex % wordList.length;
 
@@ -270,6 +281,15 @@ export default function TypingGame() {
   };
 
   const currentWord: Word | undefined = getValidCurrentWord();
+
+  // Clear forcedIndex after it was consumed so subsequent renders follow normal rules
+  useEffect(() => {
+    if (forcedIndex !== null) {
+      const t = window.setTimeout(() => setForcedIndex(null), 50);
+      return () => window.clearTimeout(t);
+    }
+    return undefined;
+  }, [forcedIndex]);
 
   // Derive current "level" from complexity * frequency band, e.g.
   // Level 1: A + 1–500, Level 2: A + 501–1000, etc.
@@ -690,6 +710,61 @@ export default function TypingGame() {
     });
   };
 
+  // Skip current word in Recall Mode — treated as a failed attempt:
+  // - adds word to `reviewWords` (and Supabase when authenticated)
+  // - increments attempts, resets streak, advances to next word
+  const handleSkipCurrentWord = () => {
+    if (!currentWord || mode !== "recall") return;
+
+    console.info('[Skip] handler called for:', currentWord.korean, currentWord.id);
+    setSkipNotice(true);
+    window.setTimeout(() => setSkipNotice(false), 1200);
+
+    setTotalAttempts((prev) => prev + 1);
+
+    if (user) {
+      setReviewWords((prev) => {
+        if (!prev.find((w) => w.id === currentWord.id)) {
+          const updated = [...prev, currentWord];
+          addReviewWord(user.id, currentWord).catch((err) =>
+            console.error('[TypingGame] Error saving skipped (review) word:', err)
+          );
+          return updated;
+        }
+        return prev;
+      });
+    } else {
+      setReviewWords((prev) => (prev.find((w) => w.id === currentWord.id) ? prev : [...prev, currentWord]));
+    }
+
+    setErrors(1);
+    setCurrentStreak(0);
+    setJustCompleted(false);
+    setInput("");
+    setMadeMistakeOnCurrentWord(false);
+
+    // Select next index — prefer a different, unlearned (in Recall Mode) word.
+    const nextIndex = (() => {
+      if (wordList.length === 0) return 0;
+      const learnedIds = new Set(learnedWords.map((w) => w.id));
+
+      for (let offset = 1; offset < wordList.length; offset++) {
+        const candidate = wordList[(currentIndex + offset) % wordList.length];
+        if (!candidate) continue;
+        if (candidate.id === currentWord.id) continue; // ensure different word
+        if (mode === "copy" || !learnedIds.has(candidate.id)) return (currentIndex + offset) % wordList.length;
+      }
+
+      // fallback: advance by one (may wrap to same if pool size === 1)
+      return (currentIndex + 1) % Math.max(1, wordList.length);
+    })();
+
+    setCurrentIndex(nextIndex);
+    // Force show the chosen index for this render (getValidCurrentWord will honor it)
+    setForcedIndex(nextIndex);
+    console.log('[Skip] Skipped word processed; moving to index', nextIndex, '->', wordList[nextIndex]?.korean ?? '(none)');
+  }; 
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-950 px-4 text-slate-50">
       <div className="w-full max-w-xl rounded-xl border border-slate-800 bg-slate-900/70 p-6 shadow-xl backdrop-blur">
@@ -1075,6 +1150,17 @@ export default function TypingGame() {
                   setInput(e.currentTarget.value);
                 }}
                 onKeyDown={(e) => {
+                  // Support Skip via Escape in Recall mode
+                  if (e.key === "Escape" && mode === "recall") {
+                    if (isComposing) {
+                      e.preventDefault();
+                      return;
+                    }
+                    e.preventDefault();
+                    handleSkipCurrentWord();
+                    return;
+                  }
+
                   if (e.key === "Enter") {
                     // Ignore Enter while the IME is still composing a syllable.
                     if (isComposing) {
@@ -1093,11 +1179,25 @@ export default function TypingGame() {
                 className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-center text-lg tracking-wide text-slate-50 outline-none ring-sky-500/60 focus:border-sky-500 focus:ring-2"
                 autoFocus
               />
+              {mode === "recall" && currentWord && (
+                <div className="mt-2 flex justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSkipCurrentWord}
+                    className="rounded-md bg-rose-600 px-3 py-1 text-xs font-medium hover:bg-rose-500 transition"
+                  >
+                    Skip
+                  </button>
+                </div>
+              )}
               <div className="h-5 text-center text-sm">
                 {justCompleted && (
                   <span className="font-medium text-emerald-400">
                     Perfect! Moving to the next word…
                   </span>
+                )}
+                {skipNotice && (
+                  <span className="font-medium text-rose-300">Skipped — added to review</span>
                 )}
               </div>
             </div>
