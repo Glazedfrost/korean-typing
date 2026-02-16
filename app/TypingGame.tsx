@@ -13,6 +13,7 @@ import {
   fetchReviewWords,
   addLearnedWord,
   addReviewWord,
+  removeReviewWord,
   type UserStats 
 } from "../lib/supabase";
 
@@ -625,27 +626,46 @@ export default function TypingGame() {
     // ============================================================================
     // Recall Mode: Track learned/failed words and save to Supabase
     // ============================================================================
-    if (mode === "recall" && user) {
+    if (mode === "recall") {
       if (isCorrect) {
-        // Correct: Add to learned list (Supabase + local state)
+        // If this word was previously marked for review, remove it from that list (local + DB when available)
+        setReviewWords((prev) => {
+          const exists = prev.find((w) => w.id === currentWord.id);
+          if (!exists) return prev;
+
+          // If signed in, remove server-side as well
+          if (user) {
+            removeReviewWord(user.id, currentWord.id).catch((err) =>
+              console.error('[TypingGame] Error removing word from review list:', err)
+            );
+          }
+
+          return prev.filter((w) => w.id !== currentWord.id);
+        });
+
+        // Correct: Add to learned list (local + DB when available)
         setLearnedWords((prev) => {
           if (!prev.find((w) => w.id === currentWord.id)) {
             const updated = [...prev, currentWord];
-            addLearnedWord(user.id, currentWord).catch((err) =>
-              console.error('[TypingGame] Error saving learned word:', err)
-            );
+            if (user) {
+              addLearnedWord(user.id, currentWord).catch((err) =>
+                console.error('[TypingGame] Error saving learned word:', err)
+              );
+            }
             return updated;
           }
           return prev;
         });
       } else {
-        // Wrong: Add to review list (Supabase + local state)
+        // Wrong: Add to review list (local + DB when available)
         setReviewWords((prev) => {
           if (!prev.find((w) => w.id === currentWord.id)) {
             const updated = [...prev, currentWord];
-            addReviewWord(user.id, currentWord).catch((err) =>
-              console.error('[TypingGame] Error saving review word:', err)
-            );
+            if (user) {
+              addReviewWord(user.id, currentWord).catch((err) =>
+                console.error('[TypingGame] Error saving review word:', err)
+              );
+            }
             return updated;
           }
           return prev;
