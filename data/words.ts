@@ -1,4 +1,4 @@
-import vocabExtended from "./korean_vocabulary_extended.json";
+import topikVocab from "./topik_vocab_with_wiktionary.json";
 
 // Unified word shape used by the typing game.
 export type Word = {
@@ -11,6 +11,7 @@ export type Word = {
   frequency?: number | null;
   complexity?: string | null;
   wordreferencelink?: string | null;
+  wiktionarylink?: string | null;
 };
 
 type RawVocabEntry = {
@@ -22,10 +23,11 @@ type RawVocabEntry = {
   frequency: number | null;
   complexity: string | null;
   wordreferencelink: string | null;
+  wiktionarylink: string | null;
 };
 
 // Full extended vocabulary list used by the app.
-export const allWords: Word[] = (vocabExtended as RawVocabEntry[]).map(
+export const allWords: Word[] = (topikVocab as RawVocabEntry[]).map(
   (item, index) => ({
     id: `word_${index}_${item.korean}`, // Create unique ID from index + korean text
     korean: item.korean,
@@ -37,5 +39,6 @@ export const allWords: Word[] = (vocabExtended as RawVocabEntry[]).map(
     // Normalize complexity: treat null or 'E' as 'D'
     complexity: (item.complexity === null || item.complexity === "E") ? "D" : item.complexity,
     wordreferencelink: item.wordreferencelink,
+    wiktionarylink: item.wiktionarylink,
   })
 );

@@ -1156,6 +1156,18 @@ export default function TypingGame() {
                   </a>
                 </div>
               )}
+              {currentWord.wiktionarylink && (
+                <div className="pt-1 text-xs">
+                  <a
+                    href={currentWord.wiktionarylink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-sky-400 underline underline-offset-2 hover:text-sky-300"
+                  >
+                    Open in Wiktionary
+                  </a>
+                </div>
+              )}
             </div>
 
             {/* Typing input and feedback */}
