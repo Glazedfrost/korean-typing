@@ -602,9 +602,24 @@ export default function TypingGame() {
     setJustCompleted(false);
   };
 
-  const progressLabel =
-    wordList.length > 0 ? `${currentIndex + 1} / ${wordList.length}` : "0 / 0";
+  // Count how many learned words belong to the current filter/level set.
+  const learnedInLevelCount = useMemo(() => {
+    if (wordList.length === 0 || learnedWords.length === 0) return 0;
+    const ids = new Set(wordList.map((w) => w.id));
+    return learnedWords.filter((w) => ids.has(w.id)).length;
+  }, [wordList, learnedWords]);
 
+  // Progress counter shows current index in copy mode, but in recall mode
+  // we display learned words for this level only.
+  const progressLabel = wordList.length > 0
+    ? mode === "recall"
+        ? `${learnedInLevelCount} / ${wordList.length}`
+        : `${currentIndex + 1} / ${wordList.length}`
+    : "0 / 0";
+
+  // accuracy is still computed for internal logic / supabase updates but
+  // it's no longer shown in the UI.  Keeping the variable prevents
+  // linter warnings for unused references later in the file.
   const accuracy =
     totalAttempts === 0
       ? 0
@@ -966,27 +981,10 @@ export default function TypingGame() {
               <span className="rounded-full bg-slate-800 px-2 py-1 font-mono">
                 {progressLabel}
               </span>
-              <span className="rounded-full bg-slate-800 px-2 py-1 font-mono">
-                Errors: {errors}
-              </span>
+              {/* errors removed per requirements */}
             </div>
-            <div className="flex flex-wrap justify-end gap-2 text-[11px]">
-              <span className="rounded-full bg-slate-800 px-2 py-1 font-mono">
-                Acc: {accuracy}%
-              </span>
-              <span className="rounded-full bg-slate-800 px-2 py-1 font-mono">
-                Streak: {currentStreak} (max {maxStreak})
-              </span>
-              <span className="rounded-full bg-slate-800 px-2 py-1 font-mono">
-                Score: {score}
-              </span>
-              <span className="rounded-full bg-slate-800 px-2 py-1 font-mono">
-                Level: {currentLevel ?? "-"}
-              </span>
-              <span className="rounded-full bg-slate-800 px-2 py-1 font-mono">
-                Max Lv: {maxLevelUnlocked}
-              </span>
-            </div>
+            {/* score, streak, accuracy, level and max level have been
+                removed from the header; we only show the counter above */}
           </div>
         </div>
 
@@ -1168,6 +1166,20 @@ export default function TypingGame() {
                   </a>
                 </div>
               )}
+
+              {/* YouGlish pronunciation link - always available since korean word exists */}
+              <div className="pt-1 text-xs">
+                <a
+                  href={`https://youglish.com/pronounce/${encodeURIComponent(
+                    currentWord.korean
+                  )}/korean`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sky-400 underline underline-offset-2 hover:text-sky-300"
+                >
+                  Open in YouGlish
+                </a>
+              </div>
             </div>
 
             {/* Typing input and feedback */}
