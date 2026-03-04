@@ -21,7 +21,8 @@ import {
 // Game modes:
 // - "copy": show the Korean word and ask the user to copy it
 // - "recall": hide the Korean word, user recalls it from the definition
-type GameMode = "copy" | "recall";
+// - "dictionary": search mode, type characters and matching words appear
+type GameMode = "copy" | "recall" | "dictionary";
 
 // Filters for the extended vocabulary dataset.
 type ComplexityFilter = "all" | "A" | "B" | "C" | "D";
@@ -162,6 +163,9 @@ export default function TypingGame() {
     useState<FrequencyBandId>("1-500");
   const [classificationFilter, setClassificationFilter] =
     useState<ClassificationFilter>("all");
+
+  // Dictionary Mode Search
+  const [dictionarySearch, setDictionarySearch] = useState("");
 
   // Accuracy and scoring state
   const [totalAttempts, setTotalAttempts] = useState(0);
@@ -394,15 +398,36 @@ export default function TypingGame() {
         // Fetch learned words from Supabase
         const { data: learnedData } = await fetchLearnedWords(session.user.id);
         if (learnedData && learnedData.length > 0) {
-          setLearnedWords(learnedData.map((lw) => lw.word_data));
+          const learned = learnedData.map((lw) => lw.word_data);
+          setLearnedWords(learned);
           console.log('[TypingGame] Loaded learned words:', learnedData.length);
-        }
-
-        // Fetch review words (failed) from Supabase
-        const { data: reviewData } = await fetchReviewWords(session.user.id);
-        if (reviewData && reviewData.length > 0) {
-          setReviewWords(reviewData.map((rw) => rw.word_data));
-          console.log('[TypingGame] Loaded review words:', reviewData.length);
+          
+          // Fetch review words (failed) from Supabase
+          const { data: reviewData } = await fetchReviewWords(session.user.id);
+          if (reviewData && reviewData.length > 0) {
+            // Filter out any review words that are already in learned_words
+            const learnedIds = new Set(learned.map((w) => w.id));
+            const filteredReview = reviewData
+              .map((rw) => rw.word_data)
+              .filter((w) => !learnedIds.has(w.id));
+            
+            setReviewWords(filteredReview);
+            
+            const removed = reviewData.length - filteredReview.length;
+            if (removed > 0) {
+              console.log(
+                `[TypingGame] Cleaned up ${removed} duplicate word(s) from review list (already in learned)`
+              );
+            }
+            console.log('[TypingGame] Loaded review words:', filteredReview.length);
+          }
+        } else {
+          // If no learned words, just load review words as-is
+          const { data: reviewData } = await fetchReviewWords(session.user.id);
+          if (reviewData && reviewData.length > 0) {
+            setReviewWords(reviewData.map((rw) => rw.word_data));
+            console.log('[TypingGame] Loaded review words:', reviewData.length);
+          }
         }
       } else {
         console.log('[TypingGame] No user session, clearing state');
@@ -1060,6 +1085,17 @@ export default function TypingGame() {
           >
             Recall Mode
           </button>
+          <button
+            type="button"
+            onClick={() => handleModeChange("dictionary")}
+            className={`flex-1 rounded-full px-3 py-1 transition ${
+              mode === "dictionary"
+                ? "bg-emerald-500 text-white shadow-sm"
+                : "text-slate-300 hover:text-white"
+            }`}
+          >
+            Dictionary
+          </button>
         </div>
 
         {/* Recall Mode: Learned/To Review Tabs */}
@@ -1162,7 +1198,93 @@ export default function TypingGame() {
           </div>
         )}
 
-        {currentWord ? (
+        {/* Dictionary Mode */}
+        {mode === "dictionary" && (
+          <div className="mb-6 space-y-4">
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-slate-300">
+                Search words (by Korean or English):
+              </label>
+              <input
+                type="text"
+                value={dictionarySearch}
+                onChange={(e) => setDictionarySearch(e.target.value)}
+                placeholder="Type Korean characters or English words..."
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-50 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/60"
+                autoFocus
+              />
+            </div>
+
+            {/* Dictionary Results */}
+            <div className="max-h-96 space-y-2 overflow-y-auto rounded-lg bg-slate-800/50 p-4">
+              {(() => {
+                const query = dictionarySearch.toLowerCase().trim();
+                if (!query) {
+                  return (
+                    <div className="text-center text-sm text-slate-400">
+                      Start typing to search for words...
+                    </div>
+                  );
+                }
+
+                // Filter words by current complexity/frequency filters + search query
+                const filtered = wordList.filter((word) => {
+                  const korean = word.korean.toLowerCase();
+                  const english = word.en.toLowerCase();
+                  return korean.includes(query) || english.includes(query);
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="text-center text-sm text-slate-400">
+                      No words found matching "{dictionarySearch}"
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="space-y-2">
+                    <div className="sticky top-0 text-xs font-medium text-slate-400 bg-slate-800/50 p-2 rounded">
+                      Found {filtered.length} word{filtered.length !== 1 ? "s" : ""}
+                    </div>
+                    {filtered.map((word) => (
+                      <div
+                        key={word.id}
+                        className="rounded-md border border-emerald-900/40 bg-emerald-900/15 p-3 hover:bg-emerald-900/25 transition"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <div className="text-lg font-semibold text-emerald-300">
+                              {word.korean}
+                            </div>
+                            <div className="text-sm text-slate-300 mt-1">
+                              {word.en}
+                              {word.zh && (
+                                <span className="text-slate-400 ml-2">/ {word.zh}</span>
+                              )}
+                            </div>
+                            {word.hanja && (
+                              <div className="text-xs text-slate-400 mt-1">
+                                {word.hanja}
+                              </div>
+                            )}
+                            {word.classification && (
+                              <div className="text-xs text-slate-500 mt-1">
+                                {word.classification}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+
+        {currentWord && mode !== "dictionary" ? (
           <>
             {/* Word and definitions */}
             <div className="mb-6 space-y-2 text-center">
@@ -1295,11 +1417,11 @@ export default function TypingGame() {
               </div>
             </div>
           </>
-        ) : (
+        ) : mode !== "dictionary" ? (
           <div className="mt-6 text-center text-sm text-slate-400">
             No words match the current filters. Try relaxing one of the filters.
           </div>
-        )}
+        ) : null}
 
         {/* Debug Button - Bottom Right */}
         {user && currentWord && (
