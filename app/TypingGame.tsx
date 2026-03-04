@@ -1198,91 +1198,6 @@ export default function TypingGame() {
           </div>
         )}
 
-        {/* Dictionary Mode */}
-        {mode === "dictionary" && (
-          <div className="mb-6 space-y-4">
-            <div className="space-y-2">
-              <label className="block text-sm font-medium text-slate-300">
-                Search words (by Korean or English):
-              </label>
-              <input
-                type="text"
-                value={dictionarySearch}
-                onChange={(e) => setDictionarySearch(e.target.value)}
-                placeholder="Type Korean characters or English words..."
-                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-4 py-2 text-sm text-slate-50 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/60"
-                autoFocus
-              />
-            </div>
-
-            {/* Dictionary Results */}
-            <div className="max-h-96 space-y-2 overflow-y-auto rounded-lg bg-slate-800/50 p-4">
-              {(() => {
-                const query = dictionarySearch.toLowerCase().trim();
-                if (!query) {
-                  return (
-                    <div className="text-center text-sm text-slate-400">
-                      Start typing to search for words...
-                    </div>
-                  );
-                }
-
-                // Filter words by current complexity/frequency filters + search query
-                const filtered = wordList.filter((word) => {
-                  const korean = word.korean.toLowerCase();
-                  const english = word.en.toLowerCase();
-                  return korean.includes(query) || english.includes(query);
-                });
-
-                if (filtered.length === 0) {
-                  return (
-                    <div className="text-center text-sm text-slate-400">
-                      No words found matching "{dictionarySearch}"
-                    </div>
-                  );
-                }
-
-                return (
-                  <div className="space-y-2">
-                    <div className="sticky top-0 text-xs font-medium text-slate-400 bg-slate-800/50 p-2 rounded">
-                      Found {filtered.length} word{filtered.length !== 1 ? "s" : ""}
-                    </div>
-                    {filtered.map((word) => (
-                      <div
-                        key={word.id}
-                        className="rounded-md border border-emerald-900/40 bg-emerald-900/15 p-3 hover:bg-emerald-900/25 transition"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="flex-1 min-w-0">
-                            <div className="text-lg font-semibold text-emerald-300">
-                              {word.korean}
-                            </div>
-                            <div className="text-sm text-slate-300 mt-1">
-                              {word.en}
-                              {word.zh && (
-                                <span className="text-slate-400 ml-2">/ {word.zh}</span>
-                              )}
-                            </div>
-                            {word.hanja && (
-                              <div className="text-xs text-slate-400 mt-1">
-                                {word.hanja}
-                              </div>
-                            )}
-                            {word.classification && (
-                              <div className="text-xs text-slate-500 mt-1">
-                                {word.classification}
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                );
-              })()}
-            </div>
-          </div>
-        )}
 
         {currentWord && mode !== "dictionary" ? (
           <>
@@ -1415,7 +1330,7 @@ export default function TypingGame() {
                   <span className="font-medium text-rose-300">Skipped — added to review</span>
                 )}
               </div>
-            </div>
+          </div>
           </>
         ) : mode !== "dictionary" ? (
           <div className="mt-6 text-center text-sm text-slate-400">
@@ -1423,8 +1338,80 @@ export default function TypingGame() {
           </div>
         ) : null}
 
-        {/* Debug Button - Bottom Right */}
-        {user && currentWord && (
+        {/* Dictionary Mode */}
+        {mode === "dictionary" && (
+          <div className="mt-6 space-y-4">
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-slate-300">
+                Search words:
+              </label>
+              <input
+                type="text"
+                value={dictionarySearch}
+                onChange={(e) => setDictionarySearch(e.target.value)}
+                placeholder="Korean or English..."
+                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-50 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/60"
+                autoFocus
+              />
+            </div>
+
+            {/* Dictionary Results */}
+            <div className="max-h-96 overflow-y-auto space-y-2 rounded-lg bg-slate-800/50 p-3">
+              {(() => {
+                const query = dictionarySearch.toLowerCase().trim();
+                if (!query) {
+                  return (
+                    <div className="text-center text-xs text-slate-400 py-4">
+                      Start typing...
+                    </div>
+                  );
+                }
+
+                // Filter words by current complexity/frequency filters + search query
+                const filtered = wordList.filter((word) => {
+                  const korean = word.korean.toLowerCase();
+                  const english = word.en.toLowerCase();
+                  return korean.includes(query) || english.includes(query);
+                });
+
+                if (filtered.length === 0) {
+                  return (
+                    <div className="text-center text-xs text-slate-400 py-4">
+                      No words found
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="space-y-2">
+                    <div className="sticky top-0 text-xs font-medium text-slate-400 bg-slate-800/50 px-2 py-1 rounded">
+                      {filtered.length} result{filtered.length !== 1 ? "s" : ""}
+                    </div>
+                    {filtered.map((word) => (
+                      <div
+                        key={word.id}
+                        className="rounded-md border border-emerald-900/40 bg-emerald-900/15 p-2 hover:bg-emerald-900/25 transition"
+                      >
+                        <div className="text-sm font-semibold text-emerald-300">
+                          {word.korean}
+                        </div>
+                        <div className="text-xs text-slate-300 mt-0.5">
+                          {word.en}
+                          {word.zh && (
+                            <span className="text-slate-400 ml-1">/ {word.zh}</span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
+        )}
+
+        {/* Debug Button - Positioned to avoid overlaps */}
+      {user && currentWord && mode !== "dictionary" && (
           <div className="fixed bottom-4 right-4 z-40">
             <button
               onClick={() => setShowDebugModal(true)}
