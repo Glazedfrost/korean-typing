@@ -14,6 +14,7 @@ import {
   addLearnedWord,
   addReviewWord,
   removeReviewWord,
+  reportIncorrectMeaning,
   type UserStats 
 } from "../lib/supabase";
 
@@ -199,6 +200,14 @@ export default function TypingGame() {
   const nextWordTimeoutRef = useRef<number | null>(null);
   // Track if we need to save progress (prevents too many saves)
   const saveTimeoutRef = useRef<number | null>(null);
+
+  // ============================================================================
+  // Debug Modal for Reporting Incorrect Meanings
+  // ============================================================================
+  const [showDebugModal, setShowDebugModal] = useState(false);
+  const [debugCorrectedMeaning, setDebugCorrectedMeaning] = useState("");
+  const [debugNotes, setDebugNotes] = useState("");
+  const [isSubmittingDebug, setIsSubmittingDebug] = useState(false);
 
   // Build the word list from the extended dataset and the current filters.
   // NOTE: In Recall Mode, we do NOT exclude learned words from this list.
@@ -476,6 +485,45 @@ export default function TypingGame() {
       setMaxStreak(0);
       setScore(0);
       setMaxLevelUnlocked(1);
+    }
+  };
+
+  // ============================================================================
+  // Debug Handler: Report incorrect word meaning
+  // ============================================================================
+  const handleReportIncorrectMeaning = async () => {
+    if (!user || !currentWord) {
+      console.error('[Debug] User or current word missing');
+      return;
+    }
+
+    if (!debugCorrectedMeaning.trim()) {
+      alert('Please enter the correct meaning');
+      return;
+    }
+
+    setIsSubmittingDebug(true);
+
+    const { error } = await reportIncorrectMeaning(
+      user.id,
+      currentWord.id,
+      currentWord.korean,
+      currentWord.en,
+      debugCorrectedMeaning,
+      debugNotes
+    );
+
+    setIsSubmittingDebug(false);
+
+    if (error) {
+      console.error('[Debug] Error reporting meaning:', error);
+      alert('Failed to report. Make sure the reported_meanings table is created.');
+    } else {
+      console.log('[Debug] Meaning reported successfully');
+      alert('Thank you! Report submitted.');
+      setShowDebugModal(false);
+      setDebugCorrectedMeaning("");
+      setDebugNotes("");
     }
   };
 
@@ -1250,6 +1298,96 @@ export default function TypingGame() {
         ) : (
           <div className="mt-6 text-center text-sm text-slate-400">
             No words match the current filters. Try relaxing one of the filters.
+          </div>
+        )}
+
+        {/* Debug Button - Bottom Right */}
+        {user && currentWord && (
+          <div className="fixed bottom-4 right-4 z-40">
+            <button
+              onClick={() => setShowDebugModal(true)}
+              title="Report incorrect word meaning"
+              className="rounded-full bg-orange-600 hover:bg-orange-500 text-white p-3 shadow-lg transition transform hover:scale-110"
+            >
+              <svg
+                className="w-5 h-5"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M12 8v4m0 4v.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                />
+              </svg>
+            </button>
+          </div>
+        )}
+
+        {/* Debug Modal */}
+        {showDebugModal && (
+          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+            <div className="bg-slate-800 rounded-lg shadow-xl max-w-md w-full p-6 space-y-4">
+              <h2 className="text-lg font-bold text-slate-100">Report Incorrect Meaning</h2>
+              
+              <div className="space-y-2">
+                <p className="text-sm text-slate-400">
+                  <span className="font-semibold text-slate-300">Word:</span> {currentWord?.korean}
+                </p>
+                <p className="text-sm text-slate-400">
+                  <span className="font-semibold text-slate-300">Current meaning:</span> {currentWord?.en}
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-slate-300">
+                  Correct meaning:
+                </label>
+                <input
+                  type="text"
+                  value={debugCorrectedMeaning}
+                  onChange={(e) => setDebugCorrectedMeaning(e.target.value)}
+                  placeholder="Enter the correct meaning..."
+                  className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-50 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/60"
+                  autoFocus
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-sm font-medium text-slate-300">
+                  Additional notes (optional):
+                </label>
+                <textarea
+                  value={debugNotes}
+                  onChange={(e) => setDebugNotes(e.target.value)}
+                  placeholder="Any other context about the error..."
+                  className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-50 outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/60 h-20 resize-none"
+                />
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => {
+                    setShowDebugModal(false);
+                    setDebugCorrectedMeaning("");
+                    setDebugNotes("");
+                  }}
+                  disabled={isSubmittingDebug}
+                  className="flex-1 rounded-lg border border-slate-600 bg-slate-900 px-4 py-2 text-sm font-medium text-slate-100 hover:bg-slate-800 transition disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleReportIncorrectMeaning}
+                  disabled={isSubmittingDebug}
+                  className="flex-1 rounded-lg bg-orange-600 px-4 py-2 text-sm font-medium text-white hover:bg-orange-500 transition disabled:opacity-50"
+                >
+                  {isSubmittingDebug ? "Submitting..." : "Submit Report"}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

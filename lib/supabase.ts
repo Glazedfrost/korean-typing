@@ -643,3 +643,41 @@ export async function removeReviewWord(userId: string, wordId: string) {
 
   return { error }
 }
+
+/**
+ * Report incorrect word meaning for debugging
+ * Records user's feedback about wrong definitions/translations
+ */
+export async function reportIncorrectMeaning(
+  userId: string,
+  wordId: string,
+  korean: string,
+  currentMeaning: string,
+  correctedMeaning: string,
+  notes: string
+) {
+  console.log('[Supabase DB] Reporting incorrect meaning for word:', korean)
+  
+  const { data, error } = await supabase
+    .from('reported_meanings')
+    .insert({
+      user_id: userId,
+      word_id: wordId,
+      korean,
+      current_meaning: currentMeaning,
+      corrected_meaning: correctedMeaning,
+      notes,
+      status: 'pending',
+      created_at: new Date().toISOString(),
+    })
+    .select()
+    .single()
+
+  if (error) {
+    console.error('[Supabase DB] Error reporting meaning:', error.message)
+    return { data: null, error }
+  }
+
+  console.log('[Supabase DB] Meaning reported successfully')
+  return { data, error: null }
+}
