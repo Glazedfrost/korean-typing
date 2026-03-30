@@ -106,6 +106,40 @@ export async function signIn(email: string, password: string) {
 }
 
 /**
+ * Send password reset email
+ */
+export async function resetPasswordForEmail(email: string, redirectTo: string) {
+  console.log('[Supabase Auth] Sending password reset email to:', email)
+  const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo,
+  })
+
+  if (error) {
+    console.error('[Supabase Auth] Password reset error:', error.message)
+  } else {
+    console.log('[Supabase Auth] Password reset email sent')
+  }
+
+  return { data, error }
+}
+
+/**
+ * Update the current user's password (used after PASSWORD_RECOVERY flow)
+ */
+export async function updatePassword(newPassword: string) {
+  console.log('[Supabase Auth] Updating password')
+  const { data, error } = await supabase.auth.updateUser({ password: newPassword })
+
+  if (error) {
+    console.error('[Supabase Auth] Update password error:', error.message)
+  } else {
+    console.log('[Supabase Auth] Password updated successfully')
+  }
+
+  return { data, error }
+}
+
+/**
  * Sign out
  */
 export async function signOut() {

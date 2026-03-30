@@ -941,8 +941,25 @@ export default function TypingGame() {
                 </div>
 
                 {authError && (
-                  <div className="text-xs text-red-400">{authError}</div>
+                  <div className="text-xs text-red-400">
+                    {authError}{" "}
+                    <a
+                      href="/reset-password"
+                      className="underline hover:text-red-300"
+                    >
+                      Forgot password?
+                    </a>
+                  </div>
                 )}
+
+                <div className="text-center">
+                  <a
+                    href="/reset-password"
+                    className="text-xs text-slate-500 hover:text-slate-300 transition"
+                  >
+                    Forgot password?
+                  </a>
+                </div>
               </div>
             )}
           </div>
